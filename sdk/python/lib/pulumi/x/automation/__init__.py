@@ -137,6 +137,7 @@ from ._stack_settings import (
 )
 
 from ._stack import (
+    OnEvent,
     Stack,
     UpdateSummary,
     UpResult,
@@ -188,6 +189,7 @@ __all__ = [
     "StackSettings",
 
     # _stack
+    "OnEvent",
     "Stack",
     "UpdateSummary",
     "UpResult",
