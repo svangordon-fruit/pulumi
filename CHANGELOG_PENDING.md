@@ -3,6 +3,8 @@
 
 ### Improvements
 
+- [sdk/python] Ensure all async tasks are awaited prior to exit.
+  [#6606](https://github.com/pulumi/pulumi/pull/6606)
 
 ### Bug Fixes
 
