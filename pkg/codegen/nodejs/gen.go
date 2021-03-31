@@ -845,7 +845,13 @@ func (mod *modContext) genType(w io.Writer, obj *schema.ObjectType, input bool, 
 	}
 
 	wrapInput := input && !mod.details(obj).functionType
-	mod.genPlainType(w, tokenToName(obj.Token), obj.Comment, properties, input, wrapInput, false, level)
+
+	name := tokenToName(obj.Token)
+	if wrapInput && mod.compatibility != tfbridge20 {
+		name += "Args"
+	}
+
+	mod.genPlainType(w, name, obj.Comment, properties, input, wrapInput, false, level)
 }
 
 func (mod *modContext) getTypeImports(t schema.Type, recurse bool, externalImports codegen.StringSet, imports map[string]codegen.StringSet, seen codegen.Set) bool {

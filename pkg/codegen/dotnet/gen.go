@@ -181,6 +181,10 @@ func (mod *modContext) isK8sCompatMode() bool {
 	return mod.compatibility == "kubernetes20"
 }
 
+func (mod *modContext) isTFCompatMode() bool {
+	return mod.compatibility == "tfbridge20"
+}
+
 func (mod *modContext) tokenToNamespace(tok string, qualifier string) string {
 	components := strings.Split(tok, ":")
 	contract.Assertf(len(components) == 3, "malformed token %v", tok)
@@ -201,6 +205,27 @@ func (mod *modContext) tokenToNamespace(tok string, qualifier string) string {
 		typ += "." + qualifier
 	}
 	return typ
+}
+
+func (mod *modContext) typeName(t *schema.ObjectType, state, input bool) string {
+	name := tokenToName(t.Token)
+	if state {
+		return name + "GetArgs"
+	}
+	if !mod.isTFCompatMode() {
+		if input && !mod.details(t).functionType {
+			return name + "Args"
+		}
+		return name
+	}
+
+	switch {
+	case input:
+		return name + "Args"
+	case mod.details(t).functionType:
+		return name + "Result"
+	}
+	return name
 }
 
 func (mod *modContext) typeString(t schema.Type, qualifier string, input, state, wrapInput, requireInitializers, optional bool) string {
@@ -260,15 +285,7 @@ func (mod *modContext) typeString(t schema.Type, qualifier string, input, state,
 		if typ != "" {
 			typ += "."
 		}
-		typ += tokenToName(t.Token)
-		switch {
-		case state:
-			typ += "GetArgs"
-		case input:
-			typ += "Args"
-		case mod.details(t).functionType:
-			typ += "Result"
-		}
+		typ += mod.typeName(t, state, input)
 	case *schema.ResourceType:
 		if strings.HasPrefix(t.Token, "pulumi:providers:") {
 			pkgName := strings.TrimPrefix(t.Token, "pulumi:providers:")
@@ -1219,29 +1236,20 @@ func visitObjectTypes(t schema.Type, visitor func(*schema.ObjectType)) {
 }
 
 func (mod *modContext) genType(w io.Writer, obj *schema.ObjectType, propertyTypeQualifier string, input, state bool, level int) error {
-	name := tokenToName(obj.Token)
-	switch {
-	case state:
-		name += "GetArgs"
-	case input:
-		name += "Args"
-	case mod.details(obj).functionType:
-		name += "Result"
-	}
-
 	pt := &plainType{
 		mod:                   mod,
-		name:                  name,
+		name:                  mod.typeName(obj, state, input),
 		comment:               obj.Comment,
 		propertyTypeQualifier: propertyTypeQualifier,
 		properties:            obj.Properties,
 		state:                 state,
+		wrapInput:             input && !mod.details(obj).functionType,
 	}
 
 	if input {
-		pt.baseClass, pt.wrapInput = "ResourceArgs", true
+		pt.baseClass = "ResourceArgs"
 		if mod.details(obj).functionType {
-			pt.baseClass, pt.wrapInput = "InvokeArgs", false
+			pt.baseClass = "InvokeArgs"
 		}
 		return pt.genInputType(w, level)
 	}
@@ -1632,7 +1640,7 @@ func (mod *modContext) gen(fs fs) error {
 			fmt.Fprintf(buffer, "}\n")
 
 			suffix := ""
-			if mod.details(t).functionType {
+			if mod.isTFCompatMode() && mod.details(t).functionType {
 				suffix = "Result"
 			}
 

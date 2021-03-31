@@ -134,26 +134,37 @@ func (mod *modContext) modNameAndName(tok string, pkg *schema.Package) (modName 
 	return
 }
 
-func (mod *modContext) objectType(t *schema.ObjectType, input, functionType bool) string {
-	modName, name := mod.tokenToModule(t.Token), tokenToName(t.Token)
+func (mod *modContext) unqualifiedObjectTypeName(t *schema.ObjectType, input bool) string {
+	name := tokenToName(t.Token)
+
+	if mod.compatibility != tfbridge20 {
+		if input && !mod.details(t).functionType {
+			return name + "Args"
+		}
+		return name
+	}
+
+	switch {
+	case input:
+		return name + "Args"
+	case mod.details(t).functionType:
+		return name + "Result"
+	}
+	return name
+}
+
+func (mod *modContext) objectType(t *schema.ObjectType, input bool) string {
+	modName, name := mod.tokenToModule(t.Token), mod.unqualifiedObjectTypeName(t, input)
 
 	var prefix string
 	if !input {
 		prefix = "outputs."
 	}
 
-	var suffix string
-	switch {
-	case input:
-		suffix = "Args"
-	case functionType:
-		suffix = "Result"
-	}
-
 	// If it's an external type, reference it via fully qualified name.
 	if t.Package != mod.pkg {
 		modName, name := mod.modNameAndName(t.Token, t.Package)
-		return fmt.Sprintf("'%s.%s%s%s%s'", pyPack(t.Package.Name), modName, prefix, name, suffix)
+		return fmt.Sprintf("'%s.%s%s%s'", pyPack(t.Package.Name), modName, prefix, name)
 	}
 
 	if modName == "" && modName != mod.mod {
@@ -161,7 +172,7 @@ func (mod *modContext) objectType(t *schema.ObjectType, input, functionType bool
 		if input {
 			rootModName = "_root_inputs."
 		}
-		return fmt.Sprintf("'%s%s%s'", rootModName, name, suffix)
+		return fmt.Sprintf("'%s%s'", rootModName, name)
 	}
 
 	if modName == mod.mod {
@@ -171,7 +182,7 @@ func (mod *modContext) objectType(t *schema.ObjectType, input, functionType bool
 		modName = "_" + strings.ReplaceAll(modName, "/", ".") + "."
 	}
 
-	return fmt.Sprintf("'%s%s%s%s'", modName, prefix, name, suffix)
+	return fmt.Sprintf("'%s%s%s'", modName, prefix, name)
 }
 
 func (mod *modContext) tokenToEnum(tok string) string {
@@ -792,13 +803,7 @@ func (mod *modContext) genTypes(dir string, fs fs) error {
 		fmt.Fprintf(w, "__all__ = [\n")
 		for _, t := range mod.types {
 			if (input && mod.details(t).inputType) || (!input && mod.details(t).outputType) {
-				name := tokenToName(t.Token)
-				if input {
-					name += "Args"
-				} else if mod.details(t).functionType {
-					name += "Result"
-				}
-				fmt.Fprintf(w, "    '%s',\n", name)
+				fmt.Fprintf(w, "    '%s',\n", mod.unqualifiedObjectTypeName(t, input))
 			}
 		}
 		fmt.Fprintf(w, "]\n\n")
@@ -806,14 +811,13 @@ func (mod *modContext) genTypes(dir string, fs fs) error {
 		var hasTypes bool
 		for _, t := range mod.types {
 			if input && mod.details(t).inputType {
-				wrapInput := !mod.details(t).functionType
-				if err := mod.genType(w, t, true, wrapInput); err != nil {
+				if err := mod.genType(w, t, true); err != nil {
 					return err
 				}
 				hasTypes = true
 			}
 			if !input && mod.details(t).outputType {
-				if err := mod.genType(w, t, false, false); err != nil {
+				if err := mod.genType(w, t, false); err != nil {
 					return err
 				}
 				hasTypes = true
@@ -1879,7 +1883,7 @@ func (mod *modContext) typeString(t schema.Type, input, wrapInput, optional, acc
 	case *schema.MapType:
 		typ = fmt.Sprintf("Mapping[str, %s]", mod.typeString(t.ElementType, input, wrapInput, false, acceptMapping))
 	case *schema.ObjectType:
-		typ = mod.objectType(t, input, mod.details(t).functionType)
+		typ = mod.objectType(t, input)
 		if acceptMapping {
 			typ = fmt.Sprintf("pulumi.InputType[%s]", typ)
 		}
@@ -2027,7 +2031,9 @@ func InitParamName(name string) string {
 	}
 }
 
-func (mod *modContext) genType(w io.Writer, obj *schema.ObjectType, input, wrapInput bool) error {
+func (mod *modContext) genType(w io.Writer, obj *schema.ObjectType, input bool) error {
+	wrapInput := input && !mod.details(obj).functionType
+
 	// Sort required props first.
 	props := make([]*schema.Property, len(obj.Properties))
 	copy(props, obj.Properties)
@@ -2046,13 +2052,7 @@ func (mod *modContext) genType(w io.Writer, obj *schema.ObjectType, input, wrapI
 		decorator = "@pulumi.input_type"
 	}
 
-	name := tokenToName(obj.Token)
-	switch {
-	case input:
-		name += "Args"
-	case mod.details(obj).functionType:
-		name += "Result"
-	}
+	name := mod.unqualifiedObjectTypeName(obj, input)
 
 	var suffix string
 	if !input {
